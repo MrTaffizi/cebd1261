@@ -1,0 +1,144 @@
+# ============================================================
+# CEBD 1261 — Session 08 | GitHub Actions Deploy Workflow
+# .github/workflows/deploy.yml
+#
+# TRIGGER: Push to main branch OR manual dispatch
+#
+# PIPELINE:
+#   Job 1 — build-and-push
+#     Step 1  Checkout code
+#     Step 2  Login to Azure using Service Principal
+#     Step 3  Login to Azure Container Registry (ACR)
+#     Step 4  Build seeder image    → push to ACR
+#     Step 5  Build agent_api image → push to ACR
+#     Step 6  Build chat_ui image   → push to ACR
+#
+#   Job 2 — deploy  (runs after Job 1 succeeds)
+#     Step 1  Checkout code
+#     Step 2  Login to Azure
+#     Step 3  Inject secrets into aci-group.yml
+#     Step 4  Delete existing Container Group (if any)
+#     Step 5  Deploy aci-group.yml → Azure ACI
+#     Step 6  Print public URL
+#
+# REQUIRED GITHUB SECRETS (Settings → Secrets → Actions):
+#   AZURE_CREDENTIALS     Service Principal JSON
+#   ACR_LOGIN_SERVER      e.g. cebd1261js.azurecr.io
+#   ACR_USERNAME          ACR admin username
+#   ACR_PASSWORD          ACR admin password
+#   RESOURCE_GROUP        e.g. cebd1261-rg
+#   OPENROUTER_API_KEY    Your OpenRouter key
+# ============================================================
+
+name: Build & Deploy to Azure ACI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# ── Job 1: Build all images and push to ACR ──────────────────
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── Step 1: Checkout ────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Step 2: Login to Azure ──────────────────────────────
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # ── Step 3: Login to ACR ────────────────────────────────
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username:     ${{ secrets.ACR_USERNAME }}
+          password:     ${{ secrets.ACR_PASSWORD }}
+
+      # ── Step 4: Build & push seeder ─────────────────────────
+      - name: Build and push seeder image
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/seeder:latest ./seeder
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/seeder:latest
+
+      # ── Step 5: Build & push agent_api ──────────────────────
+      - name: Build and push agent_api image
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/agent_api:latest ./agent
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/agent_api:latest
+
+      # ── Step 6: Build & push chat_ui ────────────────────────
+      # Session 07 mounted chat.html as a volume — that won't
+      # work on ACI. The ui/Dockerfile bakes it into the image.
+      - name: Build and push chat_ui image
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/chat_ui:latest ./ui
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/chat_ui:latest
+
+  # ── Job 2: Deploy Container Group to ACI ─────────────────────
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── Step 1: Checkout ────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Step 2: Login to Azure ──────────────────────────────
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # ── Step 3: Inject secrets into aci-group.yml ────────────
+      # aci-group.yml uses __PLACEHOLDERS__ instead of hardcoded
+      # values. We replace them here using sed so secrets never
+      # appear in the YAML file committed to the repo.
+      - name: Inject secrets into ACI group definition
+        run: |
+          sed -i "s|__ACR_LOGIN_SERVER__|${{ secrets.ACR_LOGIN_SERVER }}|g" aci-group.yml
+          sed -i "s|__ACR_USERNAME__|${{ secrets.ACR_USERNAME }}|g"         aci-group.yml
+          sed -i "s|__ACR_PASSWORD__|${{ secrets.ACR_PASSWORD }}|g"         aci-group.yml
+          sed -i "s|__OPENROUTER_API_KEY__|${{ secrets.OPENROUTER_API_KEY }}|g" aci-group.yml
+
+      # ── Step 4: Delete old Container Group ──────────────────
+      # ACI does not support in-place updates — must delete and
+      # recreate on every deploy. || true prevents failure if the
+      # group doesn't exist yet (first deploy).
+      - name: Delete existing Container Group
+        run: |
+          az container delete \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --name cebd1261-group \
+            --yes \
+            || true
+
+      # ── Step 5: Deploy Container Group ──────────────────────
+      - name: Deploy to Azure Container Instances
+        run: |
+          az container create \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --file aci-group.yml
+
+      # ── Step 6: Print the public URL ────────────────────────
+      - name: Print deployment URL
+        run: |
+          FQDN=$(az container show \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --name cebd1261-group \
+            --query ipAddress.fqdn \
+            --output tsv)
+          echo "============================================"
+          echo "  Chat UI : http://${FQDN}"
+          echo "  API Docs: http://${FQDN}:8893/docs"
+          echo "============================================"
