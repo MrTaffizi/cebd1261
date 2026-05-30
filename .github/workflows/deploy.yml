@@ -100,6 +100,7 @@ jobs:
       - name: Inject secrets into ACI group definition
         run: |
           sed -i "s|__DOCKERHUB_USERNAME__|${{ secrets.DOCKERHUB_USERNAME }}|g" aci-group.yml
+          sed -i "s|__DOCKERHUB_TOKEN__|${{ secrets.DOCKERHUB_TOKEN }}|g"       aci-group.yml
           sed -i "s|__OPENROUTER_API_KEY__|${{ secrets.OPENROUTER_API_KEY }}|g" aci-group.yml
 
       # ── Step 4: Delete old Container Group ──────────────────

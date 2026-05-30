@@ -23,6 +23,14 @@ properties:
   osType: Linux
   restartPolicy: OnFailure
 
+  # ── Docker Hub credentials ─────────────────────────────────
+  # Required for ACI to pull private images from Docker Hub.
+  # Also avoids anonymous pull rate limits (100 pulls/6h).
+  imageRegistryCredentials:
+    - server: index.docker.io
+      username: __DOCKERHUB_USERNAME__
+      password: __DOCKERHUB_TOKEN__
+
   # ── Public IP + exposed ports ───────────────────────────────
   ipAddress:
     type: Public
