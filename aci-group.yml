@@ -75,7 +75,6 @@ properties:
           - elasticsearch
           - -Ediscovery.type=single-node
           - -Expack.security.enabled=false
-          - -Ebootstrap.memory_lock=true
         environmentVariables:
           - name: ES_JAVA_OPTS
             value: "-Xms512m -Xmx512m"
