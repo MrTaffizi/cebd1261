@@ -61,18 +61,19 @@ properties:
             memoryInGB: 1.0
 
     # ── ElasticSearch ─────────────────────────────────────────
+    # ACI does not allow dots in environment variable names.
+    # ES settings passed as -E CLI arguments instead of env vars.
     - name: elasticsearch
       properties:
         image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+        command:
+          - elasticsearch
+          - -Ediscovery.type=single-node
+          - -Expack.security.enabled=false
+          - -Ebootstrap.memory_lock=true
         environmentVariables:
-          - name: discovery.type
-            value: single-node
           - name: ES_JAVA_OPTS
             value: "-Xms512m -Xmx512m"
-          - name: xpack.security.enabled
-            value: "false"
-          - name: bootstrap.memory_lock
-            value: "true"
         ports:
           - port: 9200
             protocol: TCP
