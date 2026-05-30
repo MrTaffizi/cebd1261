@@ -47,19 +47,16 @@ properties:
   containers:
 
     # ── MongoDB ───────────────────────────────────────────────
+    # Running without auth inside the ACI Container Group.
+    # All containers share localhost — MongoDB is not exposed
+    # to the public internet, so auth is not required here.
     - name: mongodb
       properties:
         image: mongo:latest
         command:
           - mongod
           - --bind_ip_all
-        environmentVariables:
-          - name: MONGO_INITDB_ROOT_USERNAME
-            value: admin
-          - name: MONGO_INITDB_ROOT_PASSWORD
-            secureValue: labpass
-          - name: MONGO_INITDB_DATABASE
-            value: cebd1261
+          - --noauth
         ports:
           - port: 27017
             protocol: TCP
@@ -99,7 +96,7 @@ properties:
         image: __DOCKERHUB_USERNAME__/cebd1261-seeder:latest
         environmentVariables:
           - name: MONGODB_URI
-            secureValue: "mongodb://admin:labpass@localhost:27017/cebd1261?authSource=admin"
+            secureValue: "mongodb://localhost:27017/cebd1261"
           - name: ES_URL
             value: "http://localhost:9200"
         resources:
@@ -113,7 +110,7 @@ properties:
         image: __DOCKERHUB_USERNAME__/cebd1261-agent:latest
         environmentVariables:
           - name: MONGODB_URI
-            secureValue: "mongodb://admin:labpass@localhost:27017/cebd1261?authSource=admin"
+            secureValue: "mongodb://localhost:27017/cebd1261"
           - name: ES_URL
             value: "http://localhost:9200"
           - name: OPENROUTER_MODEL
