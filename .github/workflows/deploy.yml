@@ -14,17 +14,15 @@
 #
 #   Job 2 — deploy  (runs after Job 1 succeeds)
 #     Step 1  Checkout code
-#     Step 2  Login to Azure using username + password
-#     Step 3  Set correct subscription
-#     Step 4  Inject secrets into aci-group.yml
-#     Step 5  Delete existing Container Group (if any)
-#     Step 6  Deploy aci-group.yml → Azure ACI
-#     Step 7  Print public URL
+#     Step 2  Login to Azure using Service Principal
+#     Step 3  Inject secrets into aci-group.yml
+#     Step 4  Delete existing Container Group (if any)
+#     Step 5  Deploy aci-group.yml → Azure ACI
+#     Step 6  Print public URL
 #
 # REQUIRED GITHUB SECRETS:
-#   AZURE_USERNAME           Your Azure/Microsoft account email
-#   AZURE_PASSWORD           Your Azure/Microsoft account password
-#   AZURE_SUBSCRIPTION_ID    Your Azure for Students subscription ID
+#   AZURE_CREDENTIALS        Service Principal JSON (clientId, clientSecret,
+#                            subscriptionId, tenantId)
 #   RESOURCE_GROUP           cebd1261-rg
 #   DOCKERHUB_USERNAME       Your Docker Hub username
 #   DOCKERHUB_TOKEN          Your Docker Hub access token
@@ -70,6 +68,8 @@ jobs:
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/cebd1261-agent:latest
 
       # ── Step 5: Build & push chat_ui ────────────────────────
+      # ui/Dockerfile bakes chat.html into the nginx image.
+      # ACI cannot mount host volumes — file must be in the image.
       - name: Build and push chat_ui image
         run: |
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/cebd1261-ui:latest ./ui
@@ -87,27 +87,25 @@ jobs:
         uses: actions/checkout@v4
 
       # ── Step 2: Login to Azure ──────────────────────────────
-      # Uses your Microsoft account credentials directly.
-      # These are stored as GitHub Secrets — never in the code.
+      # Uses a Service Principal stored as AZURE_CREDENTIALS.
+      # Format: JSON with clientId, clientSecret, subscriptionId, tenantId.
       - name: Login to Azure
-        run: |
-          az login \
-            --username ${{ secrets.AZURE_USERNAME }} \
-            --password ${{ secrets.AZURE_PASSWORD }}
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # ── Step 3: Set correct subscription ────────────────────
-      # Ensures we use Azure for Students, not the university one.
-      - name: Set Azure subscription
-        run: |
-          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      # ── Step 4: Inject secrets into aci-group.yml ────────────
+      # ── Step 3: Inject secrets into aci-group.yml ────────────
+      # aci-group.yml uses __PLACEHOLDERS__ so secrets are never
+      # committed to the repo. Replaced here at deploy time.
       - name: Inject secrets into ACI group definition
         run: |
           sed -i "s|__DOCKERHUB_USERNAME__|${{ secrets.DOCKERHUB_USERNAME }}|g" aci-group.yml
           sed -i "s|__OPENROUTER_API_KEY__|${{ secrets.OPENROUTER_API_KEY }}|g" aci-group.yml
 
-      # ── Step 5: Delete old Container Group ──────────────────
+      # ── Step 4: Delete old Container Group ──────────────────
+      # ACI does not support in-place updates — must delete and
+      # recreate on every deploy. || true prevents failure if the
+      # group doesn't exist yet (first deploy).
       - name: Delete existing Container Group
         run: |
           az container delete \
@@ -116,14 +114,14 @@ jobs:
             --yes \
             || true
 
-      # ── Step 6: Deploy Container Group ──────────────────────
+      # ── Step 5: Deploy Container Group ──────────────────────
       - name: Deploy to Azure Container Instances
         run: |
           az container create \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
             --file aci-group.yml
 
-      # ── Step 7: Print the public URL ────────────────────────
+      # ── Step 6: Print the public URL ────────────────────────
       - name: Print deployment URL
         run: |
           FQDN=$(az container show \
