@@ -38,7 +38,7 @@ ES_URL          = os.environ.get("ES_URL", "http://localhost:9200")
 MONGO_DB        = "cebd1261"
 MONGO_COLL      = "orders"
 ES_INDEX        = "orders"
-TARGET          = 100_000
+TARGET          = 10_000
 BATCH_SIZE      = 500
 
 # ── ACI startup retry config ───────────────────────────────────────────────────
