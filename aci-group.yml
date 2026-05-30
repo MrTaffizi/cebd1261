@@ -1,0 +1,134 @@
+# ============================================================
+# CEBD 1261 — Session 08 | aci-group.yml
+#
+# Azure Container Instance Group definition.
+# Deployed by GitHub Actions in the deploy job.
+#
+# All 5 containers share one public IP (Container Group).
+# Internal communication uses localhost — NOT service names.
+# This is the key difference from docker-compose networking.
+#
+# Public ports:
+#   80   → chat_ui  (Vue.js chat interface)
+#   8893 → agent_api (FastAPI — /docs for testing)
+#
+# Images pulled from Docker Hub (free, no Azure permissions needed).
+# __DOCKERHUB_USERNAME__ is replaced by GitHub Actions at deploy time.
+# ============================================================
+
+apiVersion: '2021-10-01'
+location: eastus
+name: cebd1261-group
+properties:
+  osType: Linux
+  restartPolicy: OnFailure
+
+  # ── Public IP + exposed ports ───────────────────────────────
+  ipAddress:
+    type: Public
+    dnsNameLabel: cebd1261-app
+    ports:
+      - protocol: TCP
+        port: 80
+      - protocol: TCP
+        port: 8893
+
+  # ── Total resources: 2 CPU, 4 GB RAM ───────────────────────
+  # Well within $100 Azure for Students credit for a class session.
+
+  containers:
+
+    # ── MongoDB ───────────────────────────────────────────────
+    - name: mongodb
+      properties:
+        image: mongo:latest
+        command:
+          - mongod
+          - --bind_ip_all
+        environmentVariables:
+          - name: MONGO_INITDB_ROOT_USERNAME
+            value: admin
+          - name: MONGO_INITDB_ROOT_PASSWORD
+            secureValue: labpass
+          - name: MONGO_INITDB_DATABASE
+            value: cebd1261
+        ports:
+          - port: 27017
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 0.5
+            memoryInGB: 1.0
+
+    # ── ElasticSearch ─────────────────────────────────────────
+    - name: elasticsearch
+      properties:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+        environmentVariables:
+          - name: discovery.type
+            value: single-node
+          - name: ES_JAVA_OPTS
+            value: "-Xms512m -Xmx512m"
+          - name: xpack.security.enabled
+            value: "false"
+          - name: bootstrap.memory_lock
+            value: "true"
+        ports:
+          - port: 9200
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 0.5
+            memoryInGB: 1.0
+
+    # ── Seeder ────────────────────────────────────────────────
+    # Runs once on deploy — seeds 100,000 orders into Mongo + ES.
+    # wait_for_services() in seed.py handles the startup race
+    # condition (ACI has no depends_on like docker-compose).
+    - name: seeder
+      properties:
+        image: __DOCKERHUB_USERNAME__/cebd1261-seeder:latest
+        environmentVariables:
+          - name: MONGODB_URI
+            secureValue: "mongodb://admin:labpass@localhost:27017/cebd1261?authSource=admin"
+          - name: ES_URL
+            value: "http://localhost:9200"
+        resources:
+          requests:
+            cpu: 0.25
+            memoryInGB: 0.5
+
+    # ── Agent API (FastAPI) ───────────────────────────────────
+    - name: agent-api
+      properties:
+        image: __DOCKERHUB_USERNAME__/cebd1261-agent:latest
+        environmentVariables:
+          - name: MONGODB_URI
+            secureValue: "mongodb://admin:labpass@localhost:27017/cebd1261?authSource=admin"
+          - name: ES_URL
+            value: "http://localhost:9200"
+          - name: OPENROUTER_MODEL
+            value: "mistralai/ministral-14b-2512"
+          - name: OPENROUTER_API_KEY
+            secureValue: __OPENROUTER_API_KEY__
+        ports:
+          - port: 8893
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 0.5
+            memoryInGB: 1.0
+
+    # ── Chat UI (nginx) ───────────────────────────────────────
+    - name: chat-ui
+      properties:
+        image: __DOCKERHUB_USERNAME__/cebd1261-ui:latest
+        ports:
+          - port: 80
+            protocol: TCP
+        resources:
+          requests:
+            cpu: 0.25
+            memoryInGB: 0.5
+
+type: Microsoft.ContainerInstance/containerGroups

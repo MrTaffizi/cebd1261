@@ -2,18 +2,26 @@
 """
 seed.py
 =======
-CEBD 1261 — Session 7 | Lab 1
+CEBD 1261 — Session 08 | Lab 1
 
 Smart seeder: checks existing counts in MongoDB and ElasticSearch.
 - If both already have TARGET records → skip entirely.
 - If either is short → generate only the missing records and insert.
 
 Target: 100,000 records.
+
+ACI note:
+    Docker Compose supports depends_on + healthcheck to delay the seeder
+    until MongoDB and ES are ready. ACI Container Groups have no such
+    mechanism — all containers start simultaneously. wait_for_services()
+    fills this gap by retrying both connections every RETRY_INTERVAL
+    seconds for up to RETRY_TIMEOUT seconds before seeding begins.
 """
 
 import logging
 import os
 import random
+import time
 from datetime import date, datetime
 
 from dotenv import load_dotenv
@@ -25,13 +33,19 @@ from data_producer import FakerAdapter, get_schema
 load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-MONGODB_URI = os.environ["MONGODB_URI"]
-ES_URL      = os.environ.get("ES_URL", "http://elasticsearch:9200")
-MONGO_DB    = "cebd1261"
-MONGO_COLL  = "orders"
-ES_INDEX    = "orders"
-TARGET      = 100_000
-BATCH_SIZE  = 500
+MONGODB_URI     = os.environ["MONGODB_URI"]
+ES_URL          = os.environ.get("ES_URL", "http://localhost:9200")
+MONGO_DB        = "cebd1261"
+MONGO_COLL      = "orders"
+ES_INDEX        = "orders"
+TARGET          = 100_000
+BATCH_SIZE      = 500
+
+# ── ACI startup retry config ───────────────────────────────────────────────────
+# MongoDB and ES start at the same time as the seeder on ACI (no depends_on).
+# Retry every RETRY_INTERVAL seconds for up to RETRY_TIMEOUT seconds.
+RETRY_INTERVAL  = 5    # seconds between each attempt
+RETRY_TIMEOUT   = 180  # 3 minutes maximum wait
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +99,70 @@ def _sanitize(record: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+# ── Startup wait (ACI has no depends_on) ─────────────────────────────────────
+def wait_for_services() -> None:
+    """
+    Block until both MongoDB and ElasticSearch are reachable, or timeout.
+
+    Why this exists:
+        Docker Compose uses depends_on + healthcheck to hold the seeder
+        until its dependencies are healthy. ACI Container Groups start all
+        containers simultaneously with no equivalent mechanism. Without this
+        function the seeder exits immediately with a connection error on
+        every cold deploy.
+
+    Strategy:
+        Poll both services every RETRY_INTERVAL seconds.
+        Only proceed when BOTH respond successfully.
+        Abort with a non-zero exit if RETRY_TIMEOUT is exceeded.
+    """
+    log.info("Waiting for MongoDB and ElasticSearch to be ready …")
+    deadline = time.time() + RETRY_TIMEOUT
+    attempt  = 0
+
+    while time.time() < deadline:
+        attempt += 1
+        mongo_ok = False
+        es_ok    = False
+
+        # ── Check MongoDB ──────────────────────────────────────────────────────
+        try:
+            client   = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=3000)
+            client.admin.command("ping")
+            client.close()
+            mongo_ok = True
+        except Exception as e:
+            log.info("  [attempt %d] MongoDB not ready: %s", attempt, e)
+
+        # ── Check ElasticSearch ────────────────────────────────────────────────
+        try:
+            es    = Elasticsearch(ES_URL, request_timeout=3)
+            info  = es.cluster.health(wait_for_status="yellow", timeout="3s")
+            es_ok = info["status"] in ("green", "yellow")
+        except Exception as e:
+            log.info("  [attempt %d] ElasticSearch not ready: %s", attempt, e)
+
+        if mongo_ok and es_ok:
+            log.info("Both services ready after %d attempt(s).", attempt)
+            return
+
+        remaining = int(deadline - time.time())
+        log.info(
+            "  MongoDB=%s  ES=%s — retrying in %ds (%ds remaining) …",
+            "✓" if mongo_ok else "✗",
+            "✓" if es_ok    else "✗",
+            RETRY_INTERVAL,
+            remaining,
+        )
+        time.sleep(RETRY_INTERVAL)
+
+    log.error(
+        "Services did not become ready within %ds. Aborting.",
+        RETRY_TIMEOUT,
+    )
+    raise SystemExit(1)
 
 
 # ── Count helpers ──────────────────────────────────────────────────────────────
@@ -161,9 +239,11 @@ def insert_es(records: list[dict]) -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     log.info("=" * 60)
-    log.info("CEBD 1261 — Session 7 Lab 1 | Smart Data Seeder")
+    log.info("CEBD 1261 — Session 08 | Smart Data Seeder")
     log.info("Target: %d records", TARGET)
     log.info("=" * 60)
+
+    wait_for_services()
 
     mc = mongo_count()
     ec = es_count()
