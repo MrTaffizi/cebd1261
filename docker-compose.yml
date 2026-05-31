@@ -101,6 +101,7 @@ services:
     build:
       context: ./agent
       dockerfile: Dockerfile
+      # dockerfile: Dockerfile.multistage # Uncomment to use multistage build (smaller image, longer build time), but you must comment previous line. as only dockerfile is allowed in build.
     container_name: agent_api
     env_file:
       - .env

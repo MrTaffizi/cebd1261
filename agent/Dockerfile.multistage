@@ -1,0 +1,45 @@
+# ============================================================
+# Multi-Stage Build — agent
+#
+# Stage 1 (builder): installs all dependencies including
+#   any C extensions, build tools, and pip cache.
+#   This stage is heavy — we throw it away after.
+#
+# Stage 2 (runtime): clean python:3.11-slim with only
+#   the installed packages copied from builder.
+#   No pip, no build tools, no cache.
+# ============================================================
+
+# ── Stage 1: Builder ─────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+# Install packages into /root/.local (user install)
+# --user keeps them separate from system Python
+# making them easy to copy to the next stage
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+
+# ── Stage 2: Runtime ─────────────────────────────────────────
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only the installed packages from builder
+# Nothing else from stage 1 comes with it
+COPY --from=builder /root/.local /root/.local
+
+# Copy application code
+COPY agents/  ./agents/
+COPY prompts/ ./prompts/
+COPY main.py  .
+
+# Make sure /root/.local/bin is on PATH so uvicorn is found
+ENV PATH=/root/.local/bin:$PATH
+
+EXPOSE 8893
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8893"]
