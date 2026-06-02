@@ -34,7 +34,7 @@ properties:
   # ── Public IP + exposed ports ───────────────────────────────
   ipAddress:
     type: Public
-    dnsNameLabel: cebd1261-app
+    dnsNameLabel: cebd1261-RalphYounes
     ports:
       - protocol: TCP
         port: 80
