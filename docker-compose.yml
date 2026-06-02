@@ -126,7 +126,7 @@ services:
       - "8080:80"
     volumes:
       - ./ui/chat.html:/usr/share/nginx/html/chat.html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - lab1-net
     depends_on:
